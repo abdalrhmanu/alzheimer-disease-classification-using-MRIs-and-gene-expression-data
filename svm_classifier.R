@@ -1,3 +1,5 @@
+# Uncomment the install below if there was an error with importing glmnet library
+# Likewise, install any package that shows an error in the import section
 # install.packages("glmnet")
 
 # Importing libraries
