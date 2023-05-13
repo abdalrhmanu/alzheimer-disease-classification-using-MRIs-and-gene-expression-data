@@ -15,13 +15,13 @@ ADCTLtrain_dir <- "./data/train/ADCTLtrain.csv"
 ADMCItrain_dir <- "./data/train/ADMCItrain.csv"
 MCICTLtrain_dir <- "./data/train/MCICTLtrain.csv"
 
-ADCTLtest_dir <- "./data/test/ADCTLtrain.csv"
-ADMCItest_dir <- "./data/test/ADMCItrain.csv"
-MCICTLtest_dir <- "./data/test/MCICTLtrain.csv"
+ADCTLtest_dir <- "./data/test/ADCTLtest.csv"
+ADMCItest_dir <- "./data/test/ADMCItest.csv"
+MCICTLtest_dir <- "./data/test/MCICTLtest.csv"
 
 # Reading data
 train_data <- read.csv(ADCTLtrain_dir, header = TRUE)
-test_data <- read.csv(ADCTLtrain_dir, header = TRUE)
+test_data <- read.csv(ADCTLtest_dir, header = TRUE)
 
 # Split the data into training, validation, and test sets
 set.seed(123)
@@ -63,3 +63,25 @@ test_pred_factor <- factor(test_pred, levels = c("AD", "CTL"))
 # Evaluate the model's performance on the test data
 confusionMatrix(test_pred_factor, test_labels_factor)
 
+
+# Predicting on test data
+# Preprocess the test data
+test_features_prediction <- test_data[,2:430]
+
+# Use the trained SVM model to predict labels for the test data
+test_pred <- predict(tuned_svm_model$best.model, test_features_prediction)
+
+# Convert test_pred to factor with levels "AD" and "CTL"
+test_pred_factor <- factor(test_pred, levels = c("AD", "CTL"))
+
+# Print the predicted labels for the test data
+print(test_pred_factor)
+
+# Evaluate the model's performance on the test data
+# confusionMatrix(test_pred_factor)
+
+
+# Corrections to be made:
+# 1. test_data is not used in testing the dataset, it uses the value from the
+# validation dataset
+# 2. Add feature selection method and evaluate using the correct metrices
