@@ -1,8 +1,10 @@
 ####  0.0 Installing necessary packages
-list.packages <- c("caret", "glmnet", "rpart", "randomForest", "e1071", "ggplot2", "usdm", "Boruta", "gbm", "pROC")
+list.packages <- c("caret", "glmnet", "rpart", "randomForest", "e1071", "ggplot2", "usdm", "Boruta", "gbm", "pROC", "rfa")
 new.packages <- list.packages[!(list.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 
+# Install and load the necessary package
+library(rfa)
 library(caret)
 library(glmnet)
 library(rpart)
@@ -211,24 +213,24 @@ print(test_pred_factor)
 #                   ADMCI
 ######### DATASET 2 EXPERIMENTAL ############
 #############################################
-####  0.2 Reading data
+####  1.0 Reading data
 train_data_ADMCI <- read.csv(ADMCI_train_dir, header = TRUE)
 test_data_ADMCI <- read.csv(ADMCI_test_dir, header = TRUE)
 
-#     3.1 Dropping the id col in all datasets
+####  2.0 Pre-processing the data
+#     2.1 Dropping the id col in all datasets
 train_data_ADMCI <- train_data_ADMCI[, -1] 
 test_data_ADMCI <- test_data_ADMCI[, -1]
 
-
-#     3.2 Encoding label col in training data
+#     2.2 Encoding label col in training data
 train_data_ADMCI$Label <- ifelse(train_data_ADMCI$Label == "AD", 1, 0)
 
-#     3.3 Checking if the data set has the non-numeric columns
+#     2.3 Checking if the data set has the non-numeric columns
 non_numeric_cols <- names(train_data_ADMCI)[!sapply(train_data_ADMCI, is.numeric)]
 cat(non_numeric_cols)
 
-####  6.0 Data Splitting
-#     6.1 Split the data into training, validation, and test sets
+####  3.0 Data Splitting
+#     3.1 Split the data into training, validation, and test sets
 set.seed(123)
 trainIndex <- createDataPartition(train_data_ADMCI$Label, 
                                   p = 0.7, list = FALSE)
@@ -239,29 +241,38 @@ validIndex <- createDataPartition(valid_test$Label, p = 0.5, list = FALSE)
 validation <- valid_test[validIndex,]
 test <- valid_test[-validIndex,]
 
-# Convert the data frame to matrix
+#     3.2 Convert the data frame to matrix
 train_matrix <- as.matrix(train[, -ncol(train)])
 train_labels <- train$Label
 
 # Perform feature selection using the Boruta algorithm
-boruta_result <- Boruta(train_matrix, train_labels)
+# boruta_result <- Boruta(train_matrix, train_labels)
 
 # Print the selected features
-selected_features <- getSelectedAttributes(boruta_result, withTentative = TRUE)
+# selected_features <- getSelectedAttributes(boruta_result, withTentative = TRUE)
 
-# Select the features from the training and testing datasets
+#     4.1 Perform feature selection using Recursive Feature Elimination with Cross-Validation
+ctrl <- rfeControl(functions = rfFuncs, method = "cv", number = 10)
+rfe_result <- rfe(x = train_matrix, y = train_labels, sizes = c(1:ncol(train_matrix)-1), rfeControl = ctrl)
+
+#     4.2 Extract the top 10 variables from the RFE results
+selected_features <- rfe_result$optVariables[1:10]
+print(selected_features)
+
+#     4.3 Select the features from the training and testing datasets
 train_data_selected <- train[, c(selected_features, "Label")]
 valid_data_selected <- validation[, c(selected_features, "Label")]
 test_data_selected <- test[, c(selected_features, "Label")]
 
-# Convert the selected features to a matrix
+#     4.4 Convert the selected features to a matrix
 train_matrix <- as.matrix(train_data_selected[, -ncol(train_data_selected)])
 train_labels <- train_data_selected$Label
 
-# Train the random forest model using cross-validation:
+#     5.0 Training dataset ADMCI
+#     5.1 Train the random forest model using cross-validation:
 ctrl <- trainControl(method = "cv", number = 10)
 
-# Train the random forest model with hyperparameter tuning
+#     5.2 Train the random forest model with hyperparameter tuning
 rf_model <- train(
   x = train_matrix,
   y = as.factor(train_labels),
@@ -270,60 +281,62 @@ rf_model <- train(
   tuneParams = list(
     mtry = c(2, 4, 6),  # Range of values for mtry
     ntree = c(100, 200, 300)  # Range of values for ntree
-  )
+  ),
+  preProcess = c("center", "scale"),  # Apply centering and scaling preprocessing
+  metric = "Accuracy"  # Use Accuracy as the evaluation metric
 )
 
-
-# Convert the selected features to a matrix
+####  6.0 Predicting on  test data
+#     6.1 Convert the selected features to a matrix
 valid_matrix <- as.matrix(valid_data_selected[, -ncol(valid_data_selected)])
 valid_labels <- valid_data_selected$Label
 
-# Validate the model on the validation data
+#     6.2 Validate the model on the validation data
 valid_predictions <- predict(rf_model, newdata = valid_matrix, type = "prob")
 valid_predictions_binary <- ifelse(valid_predictions[, 2] > 0.5, 1, 0)
 
-# Calculate the accuracy on the validation data
+#     6.3 Calculate the accuracy on the validation data
 valid_accuracy <- mean(valid_predictions_binary == valid_labels)
 cat(valid_accuracy)
 
-# Convert the selected features to a matrix
+#     6.4 Convert the selected features to a matrix
 test_matrix <- as.matrix(test_data_selected[, -ncol(test_data_selected)])
 test_labels <- test_data_selected$Label
 
-# Make predictions on the test data
+#     6.5 Make predictions on the test set
 test_predictions <- predict(rf_model, newdata = test_matrix, type = "prob")
 test_predictions_binary <- ifelse(test_predictions[, 2] > 0.5, 1, 0)
 
-# Calculate the accuracy on the test data
+#     6.6 Calculate the accuracy on the test data
 test_accuracy <- mean(test_predictions_binary == test_labels)
 cat(test_accuracy)
 
-# Convert the predictions and labels to factors with the same levels
+#     6.7 Convert the predictions and labels to factors with the same levels
 test_predictions_factor <- as.factor(test_predictions_binary)
 test_labels_factor <- as.factor(test_labels)
 
-# Create the confusion matrix
+#     6.8 Create the confusion matrix
 confusionMatrix(test_predictions_factor, test_labels_factor)
 
-#     7.4 Convert test_pred to factor with levels "AD" and "CTL"
+#     6.9 Convert test_pred to factor with levels "AD" and "CTL"
 test_labels_factor <- factor(test_labels_factor, levels = c(0, 1), labels = c("CTL", "AD"))
 test_pred_factor <- factor(test_predictions_factor, levels = c(0, 1), labels = c("CTL", "AD"))
 
-#     7.5 Evaluate the model's performance on the test data
+#     6.10 Evaluate the model's performance on the test set
 calculate_metrics(test_pred_factor, test_labels_factor)
 
-
-# Select the features from the test data using the same selected features
+####  7.0 Predicting on  test data
+#     7.1 Select the features from the test data using the same selected features
 test_data_selected <- test_data_ADMCI[, selected_features]
 
-# Convert the selected features to a matrix
+#     7.2 Convert the selected features to a matrix
 test_matrix <- as.matrix(test_data_selected)
 
-# Make predictions on the test data
+#     7.3 Make predictions on the test data
 test_predictions <- predict(rf_model, newdata = test_matrix, type = "prob")
 test_predictions_binary <- ifelse(test_predictions[, 2] > 0.5, 1, 0)
 
-# Print the test predictions
+#     7.4 Print the test predictions
 print(test_predictions_binary)
 
 
