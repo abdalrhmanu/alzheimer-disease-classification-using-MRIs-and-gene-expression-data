@@ -1,10 +1,9 @@
 ####  0.0 Installing necessary packages
-list.packages <- c("caret", "glmnet", "rpart", "randomForest", "e1071", "ggplot2", "usdm", "Boruta", "gbm", "pROC", "rfa")
+list.packages <- c("caret", "glmnet", "rpart", "randomForest", "e1071", "ggplot2", "usdm", "Boruta", "gbm", "pROC")
 new.packages <- list.packages[!(list.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 
 # Install and load the necessary package
-library(rfa)
 library(caret)
 library(glmnet)
 library(rpart)
@@ -14,7 +13,7 @@ library(ggplot2)
 library(usdm)
 library(Boruta)
 library(gbm)
-library(pROC)  # Load the pROC package for AUC calculation
+library(pROC)  
 
 
 
@@ -28,7 +27,7 @@ ADMCI_test_dir <- "./data/test/ADMCItest.csv"
 MCICTL_test_dir <- "./data/test/MCICTLtest.csv"
 
 #### Defining functions
-calculate_metrics <- function(predicted_labels, actual_labels) {
+calculate_metrics <- function(predicted_labels, actual_labels, true_labels_value, false_labels_value) {
   library(pROC)  # Load the pROC package for AUC calculation
   
   # Convert factor labels to numeric
@@ -40,15 +39,14 @@ calculate_metrics <- function(predicted_labels, actual_labels) {
   auc <- auc(roc_obj)
   
   # Calculate MCC
-  TP <- sum(predicted_labels == "AD" & actual_labels == "AD")
-  TN <- sum(predicted_labels == "CTL" & actual_labels == "CTL")
-  FP <- sum(predicted_labels == "AD" & actual_labels == "CTL")
-  FN <- sum(predicted_labels == "CTL" & actual_labels == "AD")
+  TP <- sum(predicted_labels == true_labels_value & actual_labels == true_labels_value)
+  TN <- sum(predicted_labels == false_labels_value & actual_labels == false_labels_value)
+  FP <- sum(predicted_labels == true_labels_value & actual_labels == false_labels_value)
+  FN <- sum(predicted_labels == false_labels_value & actual_labels == true_labels_value)
   
   # Check for division by zero
   if (TP + FP == 0 || TP + FN == 0 || TN + FP == 0 || TN + FN == 0) {
     mcc <- NaN
-    print("HERE")
   } else {
     mcc <- (TP * TN - FP * FN) / sqrt((TP + FP) * (TP + FN) * (TN + FP) * (TN + FN))
   }
@@ -193,7 +191,8 @@ test_labels_factor <- factor(test$Label, levels = c(1, 0), labels = c("AD", "CTL
 confusionMatrix(test_pred_factor, test_labels_factor)
 
 #     7.5 Evaluate the model's performance on the test set
-calculate_metrics(test_pred_factor, test_labels_factor)
+calculate_metrics(test_pred_factor, test_labels_factor, true_labels_value='AD', false_labels_value='CTL')
+
 
 ####  8.0 Predicting on  test data
 #     8.1 Preprocess the test data, MUST be same as training preprocessing!!
@@ -207,6 +206,13 @@ test_pred_factor <- factor(test_pred, levels = c(1, 0), labels = c("AD", "CTL"))
 
 #     8.4 Print the predicted labels for the test data
 print(test_pred_factor)
+
+#     8.4 Get the predicted probabilities for each class
+predicted_probabilities <- attr(test_pred, "probabilities")
+
+print(data.frame(Label = test_pred_factor,
+                 AD_Probability = predicted_probabilities[, 1],
+                 CTL_Probability = predicted_probabilities[, 0]))
 
 
 #############################################
@@ -270,7 +276,7 @@ train_labels <- train_data_selected$Label
 
 #     5.0 Training dataset ADMCI
 #     5.1 Train the random forest model using cross-validation:
-ctrl <- trainControl(method = "cv", number = 10)
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
 
 #     5.2 Train the random forest model with hyperparameter tuning
 rf_model <- train(
@@ -312,18 +318,19 @@ test_accuracy <- mean(test_predictions_binary == test_labels)
 cat(test_accuracy)
 
 #     6.7 Convert the predictions and labels to factors with the same levels
-test_predictions_factor <- as.factor(test_predictions_binary)
-test_labels_factor <- as.factor(test_labels)
+test_predictions_factor <- factor(test_predictions_binary, levels = c(0, 1), labels = c("MCI", "AD"))
+test_labels_factor <- factor(test_labels, levels = c(0, 1), labels = c("MCI", "AD"))
 
 #     6.8 Create the confusion matrix
 confusionMatrix(test_predictions_factor, test_labels_factor)
 
-#     6.9 Convert test_pred to factor with levels "AD" and "CTL"
-test_labels_factor <- factor(test_labels_factor, levels = c(0, 1), labels = c("CTL", "AD"))
-test_pred_factor <- factor(test_predictions_factor, levels = c(0, 1), labels = c("CTL", "AD"))
+#     6.9 Convert test_pred to factor with levels "MCI" and "AD"
+# test_labels_factor <- factor(test_labels_factor, levels = c(0, 1), labels = c("AD", "MCI"))
+# test_pred_factor <- factor(test_predictions_factor, levels = c(0, 1), labels = c("MCI", "AD"))
 
 #     6.10 Evaluate the model's performance on the test set
-calculate_metrics(test_pred_factor, test_labels_factor)
+# calculate_metrics(test_pred_factor, test_labels_factor)
+calculate_metrics(test_predictions_factor, test_labels_factor, true_labels_value='MCI', false_labels_value='AD')
 
 ####  7.0 Predicting on  test data
 #     7.1 Select the features from the test data using the same selected features
@@ -339,6 +346,17 @@ test_predictions_binary <- ifelse(test_predictions[, 2] > 0.5, 1, 0)
 #     7.4 Print the test predictions
 print(test_predictions_binary)
 
+test_predictions_binary <- factor(test_predictions_binary, levels = c(0, 1), labels = c("MCI", "AD"))
+
+print(data.frame(
+  # ID = test_data_selected$ID,
+  Prediction = test_predictions_binary,
+  MCI_Probability = test_predictions[, 1],
+  AD_Probability = test_predictions[, 2]
+))
+
+
+
 
 #############################################
 #                   MCICTL
@@ -351,91 +369,158 @@ dim(train_data_MCICTL)
 dim(test_data_MCICTL)
 
 #     3.1 Dropping the id col in all datasets
-train_data_MCICTL <- train_data_MCICTL[, -1] 
+train_data_MCICTL <- train_data_MCICTL[, -1]
+
+ID_column <- test_data_MCICTL[, 1]
 test_data_MCICTL <- test_data_MCICTL[, -1]
 
 #     3.2 Encoding label col in training data
 train_data_MCICTL$Label <- ifelse(train_data_MCICTL$Label == "MCI", 1, 0)
 
-# Separate the features and labels
-features <- train_data_MCICTL[, -ncol(train_data_MCICTL)]
-labels <- train_data_MCICTL$Label
+#     3.0 Feature selection using correlation on ADCTL
+#     3.1 Compute the correlation matrix between the variables in the dataset
+cor_matrix <- cor(train_data_MCICTL)
 
-# Convert the labels to a numeric binary format (0 and 1)
-labels <- as.numeric(as.factor(labels)) - 1
+#     3.2 Identify pairs of features with a correlation coefficient above 0.7
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.7)
 
-# Perform feature selection using Lasso regularization
-lasso_model <- cv.glmnet(as.matrix(features), labels, family = "binomial", alpha = 1)
+#     3.3 Remove the problematic features from the dataset
+train_data_MCICTL_clean <- train_data_MCICTL[,-highly_correlated]
+test_data_MCICTL_clean <- test_data_MCICTL[,-highly_correlated]
 
-# Extract the selected features
-selected_features <- as.matrix(features)[, which(coef(lasso_model, s = "lambda.min") != 0)]
+#     3.4 Convert the labels to a factor
+train_data_MCICTL_clean$Label <- as.factor(train_data_MCICTL_clean$Label)
+
+#     4.0 Recursive Feature Elimination
+#     4.1 Perform Recursive Feature Elimination (RFE) using caret
+ctrl <- rfeControl(functions = rfFuncs, method = "cv", number = 10)  # Use random forest as the underlying model
+result <- rfe(train_data_MCICTL_clean[, -ncol(train_data_MCICTL_clean)], train_data_MCICTL_clean$Label, sizes = c(1:ncol(train_data_MCICTL_clean)-1), rfeControl = ctrl)
+
+#     4.2 Extract the top variables from the RFE results
+selected_features <- result$optVariables[1:7]
+
+#     4.3 Subset the training and test sets with the selected features
+train_data_MCICTL_clean <- train_data_MCICTL_clean[, c(selected_features, "Label")]
+test_data_MCICTL_clean <- test_data_MCICTL_clean[, selected_features]
+
+dim(train_data_MCICTL_clean)
+dim(test_data_MCICTL_clean)
+
+#     4.4 Convert the labels to a factor
+train_data_MCICTL_clean$Label <- as.factor(train_data_MCICTL_clean$Label)
+
+# # Separate the features and labels
+# features <- train_data_MCICTL[, -ncol(train_data_MCICTL)]
+# labels <- train_data_MCICTL$Label
+#
+# # Convert the labels to a numeric binary format (0 and 1)
+# labels <- as.numeric(as.factor(labels)) - 1
+
+# # Perform feature selection using Lasso regularization
+# lasso_model <- cv.glmnet(as.matrix(features), labels, family = "binomial", alpha = 1)
+#
+# # Extract the selected features
+# selected_features <- as.matrix(features)[, which(coef(lasso_model, s = "lambda.min") != 0)]
 
 # Perform dimensional reduction using PCA
-reduced_data <- prcomp(selected_features, center = TRUE, scale. = TRUE)$x
+# reduced_data <- prcomp(selected_features, center = TRUE, scale. = TRUE)$x
 
 # Split the data back into training and testing sets
-train_data_MCICTL <- reduced_data[1:nrow(train_data_MCICTL), ]
-dim(train_data_MCICTL)
+# train_data_MCICTL <- reduced_data[1:nrow(train_data_MCICTL), ]
+# dim(train_data_MCICTL)
 
 # Combine the splitting of the reduced data
-trainIndex <- createDataPartition(labels, p = 0.7, list = FALSE)
-train <- reduced_data[trainIndex, ]
-valid_test <- reduced_data[-trainIndex, ]
+trainIndex <- createDataPartition(train_data_MCICTL_clean$Label, p = 0.7, list = FALSE)
+train <- train_data_MCICTL_clean[trainIndex, ]
+valid_test <- train_data_MCICTL_clean[-trainIndex, ]
 
 validIndex <- createDataPartition(1:nrow(valid_test), p = 0.5, list = FALSE)
 validation <- valid_test[validIndex, ]
-validation_labels <- labels[-trainIndex][validIndex]  # Extract labels using row indices
 
+# validation_labels <- labels[-trainIndex][validIndex]  # Extract labels using row indices
 test <- valid_test[-validIndex, ]
 
+#     5.2 Convert the labels to factors for all splits
+train$Label <- as.factor(train$Label)
+validation$Label <- as.factor(validation$Label)
+test$Label <- as.factor(test$Label)
+
+
 # Convert the data frame to matrix for the training data
-train_matrix <- as.matrix(train)
-train_labels <- labels[trainIndex]
+# train_matrix <- as.matrix(train)
+# train_labels <- labels[trainIndex]
 
 # Set up the control parameters for 10-fold cross-validation
-ctrl <- trainControl(method = "cv", number = 10)
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
 
 # Convert the train_labels to a factor with two levels
-train_labels <- factor(train_labels, levels = c(0, 1))
+# train_labels <- factor(train_labels, levels = c(0, 1))
 
 # Train the GBM model
-gbm_model <- train(train_matrix, train_labels,
-                   method = "gbm",
-                   trControl = ctrl,
-                   verbose = FALSE)
+# gbm_model <- train(train_matrix, train_labels,
+#                    method = "gbm",
+#                    trControl = ctrl,
+#                    verbose = FALSE)
+#     6.0 Training dataset ADCTL
+#     6.1 Train an SVM classifier using the training set
+svm_model <- svm(train[, -ncol(train)], train$Label,
+                 trControl = ctrl, probability = TRUE)
+
+####  6.2 Tune the SVM hyper-parameters using the validation set
+tuned_svm_model <- tune.svm(train[, -ncol(train)], train$Label,
+                            gamma = 10^(-6:-1), cost = 10^(0:3),
+                            kernel = "radial", tunecontrol = tune.control(sampling = "cross"),
+                            validation.x = validation[, -ncol(validation)], validation.y = validation$Label,
+                            probability = TRUE)
+
+#     6.3 Extract the best model from the tuning results
+best_svm_model <- tuned_svm_model$best.model
 
 
-# Perform predictions on the validation data
-validation_predictions <- predict(gbm_model, validation)
+#     7.0 Evaluation on test set
+#     7.1 Use the best model to predict labels for the test set of the training data
+test_pred <- predict(best_svm_model, test[, -ncol(test)], probability = TRUE)
 
-# Convert the validation_labels to a factor with two levels
-validation_labels <- factor(validation_labels, levels = c(0, 1))
+#     7.2 Convert test_pred to factor with levels "MCI" and "CTL"
+test_pred_factor <- factor(test_pred, levels = c(1, 0), labels = c("MCI", "CTL"))
 
-# Evaluate the model on the validation data
-validation_results <- confusionMatrix(validation_predictions, validation_labels)
-print(validation_results)
+#     7.3 Get the predicted probabilities for each class
+predicted_probabilities <- attr(test_pred, "probabilities")
 
-#     7.4 Convert test_pred to factor with levels "AD" and "CTL"
-test_labels_factor <- factor(validation_predictions, levels = c(0, 1), labels = c("CTL", "AD"))
-test_pred_factor <- factor(validation_labels, levels = c(0, 1), labels = c("CTL", "AD"))
-
-#     7.5 Evaluate the model's performance on the test data
-calculate_metrics(test_pred_factor, test_labels_factor)
+print(data.frame(Label = test_pred_factor,
+                 MCI_Probability = predicted_probabilities[, 1],
+                 CTL_Probability = predicted_probabilities[, 0]))
 
 
-# Perform the same feature selection using the Lasso model
-selected_test_features <- as.matrix(test_data_MCICTL)[, which(coef(lasso_model, s = "lambda.min") != 0)]
+#     7.4 Convert the labels to factors with levels "AD" and "CTL"
+test_labels_factor <- factor(test$Label, levels = c(1, 0), labels = c("MCI", "CTL"))
+confusionMatrix(test_pred_factor, test_labels_factor)
 
-# Perform the same dimensional reduction using PCA
-reduced_test_data <- predict(prcomp(selected_features, center = TRUE, scale. = TRUE), newdata = selected_test_features)
-dim(reduced_test_data)
+#     7.5 Evaluate the model's performance on the test set
+calculate_metrics(test_pred_factor, test_labels_factor, true_labels_value='MCI', false_labels_value='CTL')
 
-# Perform predictions on the test data
-test_predictions <- predict(gbm_model, reduced_test_data)
 
-# Convert the test predictions to a factor with two levels
-test_predictions <- factor(test_predictions, levels = c(0, 1))
 
-# Print the test predictions
-print(test_predictions)
+####  8.0 Predicting on  test data
+#     8.1 Preprocess the test data, MUST be same as training preprocessing!!
+test_features_prediction <- test_data_MCICTL_clean
+
+#     8.2 Use the trained SVM model to predict labels for the test data
+test_pred <- predict(tuned_svm_model$best.model, test_features_prediction, probability = TRUE)
+
+#     8.3 Convert test_pred to factor with levels "MCI" and "CTL"
+test_pred_factor <- factor(test_pred, levels = c(1, 0), labels = c("MCI", "CTL"))
+
+#     8.4 Print the predicted labels for the test data
+print(test_pred_factor)
+
+#     8.4 Get the predicted probabilities for each class
+predicted_probabilities <- attr(test_pred, "probabilities")
+
+print(data.frame(
+  ID = ID_column,
+  Label = test_pred_factor,
+  CTL_Probability = predicted_probabilities[, 1],
+  MCI_Probability = predicted_probabilities[, 2]))
+
 
